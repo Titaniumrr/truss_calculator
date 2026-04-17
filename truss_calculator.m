@@ -14,7 +14,7 @@
 %     px(2,1,4,30), py(2,1,4,30)
 %   This creates a point from start node 2, relative to the direction
 %   of member 2->1, with length 4 and angle +30 degrees.
-% - Models can be saved to and loaded from MAT files.
+% - Load points can be placed by click and completed in the load table.
 
 state = struct();
 state.mode = 'normal';
@@ -106,77 +106,32 @@ refreshAll();
             'Position', [0.22 0.55 0.16 0.28], ...
             'Callback', @onCompute);
 
-        ui.saveButton = uicontrol(panel, ...
-            'Style', 'pushbutton', ...
-            'String', 'Save', ...
-            'Units', 'normalized', ...
-            'Position', [0.40 0.55 0.14 0.28], ...
-            'Callback', @onSaveModel);
-
-        ui.loadButton = uicontrol(panel, ...
-            'Style', 'pushbutton', ...
-            'String', 'Load', ...
-            'Units', 'normalized', ...
-            'Position', [0.56 0.55 0.12 0.28], ...
-            'Callback', @onLoadModel);
-
         ui.resetViewButton = uicontrol(panel, ...
             'Style', 'pushbutton', ...
             'String', 'Reset View', ...
             'Units', 'normalized', ...
-            'Position', [0.70 0.55 0.16 0.28], ...
+            'Position', [0.40 0.55 0.16 0.28], ...
             'Callback', @onResetView);
 
         ui.clearResultsButton = uicontrol(panel, ...
             'Style', 'pushbutton', ...
             'String', 'Clear Results', ...
             'Units', 'normalized', ...
-            'Position', [0.02 0.14 0.18 0.28], ...
+            'Position', [0.58 0.55 0.18 0.28], ...
             'Callback', @onClearResults);
 
-        uicontrol(panel, ...
+        ui.statusText = uicontrol(panel, ...
             'Style', 'text', ...
-            'String', 'Click load Fx/Fy or F/phi', ...
             'HorizontalAlignment', 'left', ...
             'Units', 'normalized', ...
-            'Position', [0.22 0.17 0.20 0.18], ...
-            'BackgroundColor', [0.95 0.96 0.98]);
-
-        ui.clickLoadFxEdit = uicontrol(panel, ...
-            'Style', 'edit', ...
-            'String', '', ...
-            'Units', 'normalized', ...
-            'Position', [0.38 0.14 0.10 0.24], ...
-            'BackgroundColor', [1 1 1], ...
-            'Callback', @onClickLoadInputEdited);
-
-        ui.clickLoadFyEdit = uicontrol(panel, ...
-            'Style', 'edit', ...
-            'String', '', ...
-            'Units', 'normalized', ...
-            'Position', [0.49 0.14 0.07 0.24], ...
-            'BackgroundColor', [1 1 1], ...
-            'Callback', @onClickLoadInputEdited);
-
-        ui.clickLoadMagEdit = uicontrol(panel, ...
-            'Style', 'edit', ...
-            'String', '1000', ...
-            'Units', 'normalized', ...
-            'Position', [0.57 0.14 0.07 0.24], ...
-            'BackgroundColor', [1 1 1], ...
-            'Callback', @onClickLoadInputEdited);
-
-        ui.clickLoadAngleEdit = uicontrol(panel, ...
-            'Style', 'edit', ...
-            'String', '-90', ...
-            'Units', 'normalized', ...
-            'Position', [0.65 0.14 0.07 0.24], ...
-            'BackgroundColor', [1 1 1], ...
-            'Callback', @onClickLoadInputEdited);
+            'Position', [0.02 0.12 0.42 0.20], ...
+            'String', 'Mode: Normal', ...
+            'BackgroundColor', [0.95 0.96 0.98], ...
+            'ForegroundColor', [0.10 0.20 0.40]);
 
         modeGroup = uibuttongroup(panel, ...
             'Units', 'normalized', ...
-            'Position', [0.74 0.05 0.18 0.36], ...
+            'Position', [0.48 0.05 0.46 0.30], ...
             'SelectionChangedFcn', @onModeChanged, ...
             'BackgroundColor', [0.95 0.96 0.98], ...
             'BorderType', 'none');
@@ -200,26 +155,16 @@ refreshAll();
             'Style', 'radiobutton', ...
             'String', 'Member', ...
             'Units', 'normalized', ...
-            'Position', [0.49 0.05 0.18 0.9], ...
+            'Position', [0.49 0.05 0.24 0.9], ...
             'BackgroundColor', [0.95 0.96 0.98]);
 
         ui.addLoadModeButton = uicontrol(modeGroup, ...
             'Style', 'radiobutton', ...
             'String', 'Load', ...
             'Units', 'normalized', ...
-            'Position', [0.73 0.05 0.18 0.9], ...
+            'Position', [0.75 0.05 0.20 0.9], ...
             'BackgroundColor', [0.95 0.96 0.98]);
-
-        ui.statusText = uicontrol(panel, ...
-            'Style', 'text', ...
-            'HorizontalAlignment', 'left', ...
-            'Units', 'normalized', ...
-            'Position', [0.93 0.04 0.06 0.34], ...
-            'String', 'Mode: Normal', ...
-            'BackgroundColor', [0.95 0.96 0.98], ...
-            'ForegroundColor', [0.10 0.20 0.40]);
     end
-
     function buildNodePanel()
         ui.nodePanel = uipanel( ...
             'Parent', ui.leftPanel, ...
@@ -1087,44 +1032,13 @@ refreshAll();
         end
     end
 
-    function onSaveModel(~, ~)
-        model = readRawModelFromTables();
-        [file, folder] = uiputfile('*.mat', 'Save Model', fullfile(pwd, 'truss_model.mat'));
-        if isequal(file, 0)
-            return;
-        end
-        save(fullfile(folder, file), 'model');
-        updateInfo(sprintf('Model saved:\n%s', file));
-    end
-
-    function onLoadModel(~, ~)
-        [file, folder] = uigetfile('*.mat', 'Load Model', pwd);
-        if isequal(file, 0)
-            return;
-        end
-
-        loaded = load(fullfile(folder, file));
-        if ~isfield(loaded, 'model')
-            errordlg('The MAT file does not contain a variable named "model".', 'Load failed');
-            return;
-        end
-
-        applyRawModelToTables(loaded.model);
-        state.results = [];
-        state.symbolicResults = [];
-        state.symbolicModel = [];
-        state.symbolicVariableDefs = struct('names', {{}}, 'previewValues', []);
-        state.symbolicAngleVariableNames = {};
-        state.symbolicDisplayCache = emptySymbolicDisplayCache();
-        state.pendingElementStart = [];
-        refreshAll();
-        updateInfo(sprintf('Model loaded:\n%s', file));
-    end
-
     function onResetView(~, ~)
-        [model, errMsg] = tryGetNumericModel();
-        if isempty(errMsg)
-            padAxes(model.nodes);
+        [model, ~, ~] = getDisplayModel();
+        refreshPlot();
+        plotPoints = plotPointsForModel(model);
+        if ~isempty(plotPoints)
+            padAxes(plotPoints);
+            applySymbolicAxisLabels(model);
         end
         updateInfo('View reset.');
     end
@@ -1136,10 +1050,10 @@ refreshAll();
         state.symbolicVariableDefs = struct('names', {{}}, 'previewValues', []);
         state.symbolicAngleVariableNames = {};
         state.symbolicDisplayCache = emptySymbolicDisplayCache();
+        state.symbolicFastDisplay = false;
         refreshAll();
-        updateInfo('Computation results were removed. Geometry and inputs are kept.');
+        updateInfo('Results cleared. Geometry and input data are kept.');
     end
-
     function onModeChanged(~, evt)
         newLabel = get(evt.NewValue, 'String');
         switch newLabel
@@ -1166,7 +1080,7 @@ refreshAll();
             case 'addelement'
                 updateInfo('Mode: Member by click. Click two nodes in sequence to create a member.');
             case 'addload'
-                updateInfo('Mode: Load by click. Click nodes, members, or points in the plot to place Fx/Fy or F/angle there.');
+                updateInfo('Mode: Load by click. Click nodes or members in the plot to place load points, then enter the force values in the load table.');
         end
     end
 
@@ -1326,25 +1240,13 @@ refreshAll();
 
     function onAddLoadRow(~, ~)
         loadData = getTableDataAsCell(ui.loadsTable);
-        [fx, fy, mag, ang, inputMode, errMsg] = readClickLoadValues();
-        if ~isempty(errMsg)
-            updateInfo(errMsg);
-            return;
-        end
-
-        loadData(end + 1, :) = {'', '', formatLoadTableEntry(fx), formatLoadTableEntry(fy), ...
-            formatLoadTableEntry(mag), formatLoadTableEntry(ang)};
+        loadData(end + 1, :) = {'', '', '', '', '', ''};
         set(ui.loadsTable, 'Data', loadData);
 
         clearResultsAfterGeometryChange();
         refreshAll();
-        if strcmp(inputMode, 'empty')
-            updateInfo('New load row added. Enter X, Y, and either Fx/Fy or F/angle, or use load mode in the plot.');
-        else
-            updateInfo(sprintf('New load row added. Active input mode: %s.', loadInputModeLabel(inputMode)));
-        end
+        updateInfo('New load row added. Enter X, Y, and either Fx/Fy or F/angle, or place a load point in the plot.');
     end
-
     function onDeleteLoadRow(~, ~)
         row = selectedRowFor('loads');
         if isempty(row)
@@ -1423,20 +1325,6 @@ refreshAll();
         else
             state.selection.table = tableName;
             state.selection.rows = unique(evt.Indices(:, 1));
-        end
-    end
-
-    function onClickLoadInputEdited(src, ~)
-        if any(src == [ui.clickLoadFxEdit, ui.clickLoadFyEdit])
-            if isFilledText(get(ui.clickLoadFxEdit, 'String')) || isFilledText(get(ui.clickLoadFyEdit, 'String'))
-                set(ui.clickLoadMagEdit, 'String', '');
-                set(ui.clickLoadAngleEdit, 'String', '');
-            end
-        elseif any(src == [ui.clickLoadMagEdit, ui.clickLoadAngleEdit])
-            if isFilledText(get(ui.clickLoadMagEdit, 'String')) || isFilledText(get(ui.clickLoadAngleEdit, 'String'))
-                set(ui.clickLoadFxEdit, 'String', '');
-                set(ui.clickLoadFyEdit, 'String', '');
-            end
         end
     end
 
@@ -1614,16 +1502,6 @@ refreshAll();
     end
 
     function createLoadAtPoint(xy)
-        [fx, fy, mag, ang, inputMode, errMsg] = readClickLoadValues();
-        if ~isempty(errMsg)
-            updateInfo(errMsg);
-            return;
-        end
-        if strcmp(inputMode, 'empty')
-            updateInfo('Please first enter either Fx/Fy or F and phi for the click load.');
-            return;
-        end
-
         [displayModel, displayErr, ~] = getDisplayModel();
         [snappedPoint, isOnStructure] = snapPointToStructure(xy, displayModel);
         if ~isOnStructure
@@ -1636,18 +1514,15 @@ refreshAll();
         end
 
         loadData = getTableDataAsCell(ui.loadsTable);
-        loadData(end + 1, :) = {formatNumber(snappedPoint(1)), formatNumber(snappedPoint(2)), ...
-            formatLoadTableEntry(fx), formatLoadTableEntry(fy), ...
-            formatLoadTableEntry(mag), formatLoadTableEntry(ang)};
+        loadData(end + 1, :) = {formatNumber(snappedPoint(1)), formatNumber(snappedPoint(2)), '', '', '', ''};
         set(ui.loadsTable, 'Data', loadData);
 
         clearResultsAfterGeometryChange();
         refreshAll();
-        updateInfo(sprintf('Load %d bei (%.4g, %.4g) added.\n%s', ...
-            size(loadData, 1), snappedPoint(1), snappedPoint(2), ...
-            loadDescriptionText(fx, fy, mag, ang, inputMode)));
+        updateInfo(sprintf(['Load point %d added at (%.4g, %.4g).\n' ...
+            'Enter either Fx/Fy or F and phi for this row in the load table.'], ...
+            size(loadData, 1), snappedPoint(1), snappedPoint(2)));
     end
-
     function onLoadPointClicked(idx)
         loadData = getTableDataAsCell(ui.loadsTable);
         if idx > size(loadData, 1)
@@ -1673,52 +1548,6 @@ refreshAll();
         updateInfo(sprintf('load point %d\nX = %s %s\nY = %s %s\n%s', ...
             idx, formatAnyEntry(row{1}), state.units.length, formatAnyEntry(row{2}), state.units.length, ...
             loadDescriptionText(fx, fy, mag, ang, inputMode)));
-    end
-
-    function [fx, fy, mag, ang, inputMode, errMsg] = readClickLoadValues()
-        fxText = strtrim(get(ui.clickLoadFxEdit, 'String'));
-        fyText = strtrim(get(ui.clickLoadFyEdit, 'String'));
-        magText = strtrim(get(ui.clickLoadMagEdit, 'String'));
-        angText = strtrim(get(ui.clickLoadAngleEdit, 'String'));
-
-        hasComp = isFilledText(fxText) || isFilledText(fyText);
-        hasPolar = isFilledText(magText) || isFilledText(angText);
-
-        fx = '';
-        fy = '';
-        mag = '';
-        ang = '';
-        inputMode = 'empty';
-
-        if hasComp && hasPolar
-            errMsg = 'Please enter either Fx/Fy or F and phi, not both at the same time.';
-            return;
-        end
-
-        if hasPolar
-            if ~isFilledText(magText) || ~isFilledText(angText)
-                errMsg = 'F and phi must be entered together.';
-                return;
-            end
-            mag = magText;
-            ang = angText;
-            inputMode = 'polar';
-            errMsg = '';
-            return;
-        end
-
-        if hasComp
-            if ~isFilledText(fxText)
-                fxText = '0';
-            end
-            if ~isFilledText(fyText)
-                fyText = '0';
-            end
-            fx = fxText;
-            fy = fyText;
-            inputMode = 'components';
-        end
-        errMsg = '';
     end
 
     function [snappedPoint, ok] = snapPointToStructure(xy, model)
@@ -1767,19 +1596,6 @@ refreshAll();
             modeName = 'mixed';
         else
             modeName = 'empty';
-        end
-    end
-
-    function label = loadInputModeLabel(modeName)
-        switch modeName
-            case 'components'
-                label = 'Fx/Fy-Komponenten';
-            case 'polar'
-                label = 'Total force and angle';
-            case 'mixed'
-                label = 'mixed input';
-            otherwise
-                label = 'no input';
         end
     end
 
@@ -2301,15 +2117,57 @@ refreshAll();
             trigProdInv = ['1/cos(' angName ')*cos(' angName ')/sin(' angName ')'];
             cotProd = ['cot(' angName ')*1/cos(' angName ')'];
             cotProdInv = ['1/cos(' angName ')*cot(' angName ')'];
-            cotOnly = ['cot(' angName ')'];
+            trigProdParen = ['(cos(' angName ')/sin(' angName '))*(1/cos(' angName '))'];
+            trigProdParenInv = ['(1/cos(' angName '))*(cos(' angName ')/sin(' angName '))'];
+            cotProdParen = ['(cot(' angName '))*(1/cos(' angName '))'];
+            cotProdParenInv = ['(1/cos(' angName '))*(cot(' angName '))'];
+            cotOnlyPattern = ['(?<![A-Za-z0-9_])cot\(' regexptranslate('escape', angName) '\)(?![A-Za-z0-9_])'];
             txt = strrep(txt, trigProd, ['1/sin(' angName ')']);
             txt = strrep(txt, trigProdInv, ['1/sin(' angName ')']);
             txt = strrep(txt, cotProd, ['1/sin(' angName ')']);
             txt = strrep(txt, cotProdInv, ['1/sin(' angName ')']);
-            txt = strrep(txt, cotOnly, ['cos(' angName ')/sin(' angName ')']);
+            txt = strrep(txt, trigProdParen, ['1/sin(' angName ')']);
+            txt = strrep(txt, trigProdParenInv, ['1/sin(' angName ')']);
+            txt = strrep(txt, cotProdParen, ['1/sin(' angName ')']);
+            txt = strrep(txt, cotProdParenInv, ['1/sin(' angName ')']);
+            txt = regexprep(txt, cotOnlyPattern, ['cos(' angName ')/sin(' angName ')']);
         end
     end
 
+    function [refComponent, normalComponent, lengthComponent, thetaText, ok] = angleDisplayGeometry(model, constraintIdx, textUsage)
+        if nargin < 3 || isempty(textUsage)
+            textUsage = 'detail';
+        end
+        refComponent = [];
+        normalComponent = [];
+        lengthComponent = [];
+        thetaText = '';
+        ok = false;
+
+        [commonNode, refNode, targetNode] = sharedNodesForAngleConstraint(model.elements, ...
+            model.angleConstraints(constraintIdx).elem1, model.angleConstraints(constraintIdx).elem2, constraintIdx);
+        theta = model.angleConstraints(constraintIdx).angle;
+        thetaText = postProcessSymbolicDisplayText(char(applyAngleVariableDisplaySubstitutions(sym(theta))), textUsage);
+
+        pCommon = model.nodes(commonNode, :);
+        pRef = model.nodes(refNode, :);
+        pTarget = model.nodes(targetNode, :);
+        uRef = simplify(pRef - pCommon);
+        vTarget = simplify(pTarget - pCommon);
+        refLength = simplify(sqrt(sum(uRef.^2)));
+        if isAlways(refLength == 0, 'Unknown', 'false')
+            return;
+        end
+
+        normalBase = [-uRef(2), uRef(1)];
+        refComponent = simplify((vTarget * uRef.') / refLength);
+        normalComponent = simplify((vTarget * normalBase.') / refLength);
+        lengthComponent = simplify(sqrt(sum(vTarget.^2)));
+        if isAlways(lengthComponent == 0, 'Unknown', 'false')
+            return;
+        end
+        ok = true;
+    end
     function txt = applyAngleConstantDisplayTextSubstitutions(txtIn)
         txt = txtIn;
         if isempty(state.symbolicModel) || ~isfield(state.symbolicModel, 'angleConstraints') || isempty(state.symbolicModel.angleConstraints)
@@ -2318,40 +2176,17 @@ refreshAll();
         model = state.symbolicModel;
         for k = 1:numel(model.angleConstraints)
             try
-                [commonNode, refNode, targetNode] = sharedNodesForAngleConstraint(model.elements, ...
-                    model.angleConstraints(k).elem1, model.angleConstraints(k).elem2, k);
-                thetaText = postProcessSymbolicDisplayText(char(applyAngleVariableDisplaySubstitutions(sym(model.angleConstraints(k).angle))), 'reaction-detail');
-                pCommon = model.nodes(commonNode, :);
-                pRef = model.nodes(refNode, :);
-                pTarget = model.nodes(targetNode, :);
-                uRef = simplify(pRef - pCommon);
-                dx = simplify(pTarget(1) - pCommon(1));
-                dy = simplify(pTarget(2) - pCommon(2));
-
-                if isAlways(uRef(2) == 0, 'Unknown', 'false')
-                    refSign = symbolicDirectionSign(uRef(1));
-                    if isempty(refSign)
-                        continue;
-                    end
-                    refComponent = simplify(refSign * dx);
-                    normalComponent = simplify(dy);
-                elseif isAlways(uRef(1) == 0, 'Unknown', 'false')
-                    refSign = symbolicDirectionSign(uRef(2));
-                    if isempty(refSign)
-                        continue;
-                    end
-                    refComponent = simplify(refSign * dy);
-                    normalComponent = simplify(-dx);
-                else
+                [refComponent, normalComponent, lengthComponent, thetaText, ok] = angleDisplayGeometry(model, k, 'reaction-detail');
+                if ~ok
                     continue;
                 end
-
-                lengthComponent = simplify(sqrt(refComponent^2 + normalComponent^2));
                 replacements = {
-                    lengthComponent / normalComponent, ['1/sin(' thetaText ')']
-                    lengthComponent / refComponent, ['1/cos(' thetaText ')']
-                    normalComponent / lengthComponent, ['sin(' thetaText ')']
-                    refComponent / lengthComponent, ['cos(' thetaText ')']
+                    simplify(lengthComponent / normalComponent), ['1/sin(' thetaText ')']
+                    simplify(lengthComponent / refComponent), ['1/cos(' thetaText ')']
+                    simplify(normalComponent / lengthComponent), ['sin(' thetaText ')']
+                    simplify(refComponent / lengthComponent), ['cos(' thetaText ')']
+                    simplify(normalComponent / refComponent), ['tan(' thetaText ')']
+                    simplify(refComponent / normalComponent), ['cot(' thetaText ')']
                     };
 
                 for repIdx = 1:size(replacements, 1)
@@ -2364,12 +2199,12 @@ refreshAll();
                         continue;
                     end
                     txt = strrep(txt, ratioText, replacements{repIdx, 2});
+                    txt = strrep(txt, ['(' ratioText ')'], replacements{repIdx, 2});
                 end
             catch
             end
         end
     end
-
     function progressHandle = beginComputeProgress()
         progressHandle = struct('waitbar', [], 'previousPointer', get(ui.fig, 'Pointer'));
         try
@@ -2480,42 +2315,17 @@ refreshAll();
         model = state.symbolicModel;
         for k = 1:numel(model.angleConstraints)
             try
-                [commonNode, refNode, targetNode] = sharedNodesForAngleConstraint(model.elements, ...
-                    model.angleConstraints(k).elem1, model.angleConstraints(k).elem2, k);
-                theta = model.angleConstraints(k).angle;
-                pCommon = model.nodes(commonNode, :);
-                pRef = model.nodes(refNode, :);
-                pTarget = model.nodes(targetNode, :);
-                uRef = simplify(pRef - pCommon);
-                dx = simplify(pTarget(1) - pCommon(1));
-                dy = simplify(pTarget(2) - pCommon(2));
-                thetaRad = sym(pi) / 180 * sym(theta);
-
-                if isAlways(uRef(2) == 0, 'Unknown', 'false')
-                    refSign = symbolicDirectionSign(uRef(1));
-                    if ~isempty(refSign)
-                        exprOut = subs(exprOut, dy, simplify(refSign * dx * tan(thetaRad)));
-                        refComponent = simplify(refSign * dx);
-                        normalComponent = simplify(dy);
-                        lengthComponent = simplify(sqrt(refComponent^2 + normalComponent^2));
-                        exprOut = applyAngleRatioSubstitutions(exprOut, refComponent, normalComponent, lengthComponent, thetaRad);
-                    end
-                elseif isAlways(uRef(1) == 0, 'Unknown', 'false')
-                    refSign = symbolicDirectionSign(uRef(2));
-                    if ~isempty(refSign)
-                        exprOut = subs(exprOut, dx, simplify(-refSign * dy * tan(thetaRad)));
-                        refComponent = simplify(refSign * dy);
-                        normalComponent = simplify(-dx);
-                        lengthComponent = simplify(sqrt(refComponent^2 + normalComponent^2));
-                        exprOut = applyAngleRatioSubstitutions(exprOut, refComponent, normalComponent, lengthComponent, thetaRad);
-                    end
+                [refComponent, normalComponent, lengthComponent, ~, ok] = angleDisplayGeometry(model, k, 'reaction-detail');
+                if ~ok
+                    continue;
                 end
+                thetaRad = sym(pi) / 180 * sym(model.angleConstraints(k).angle);
+                exprOut = applyAngleRatioSubstitutions(exprOut, refComponent, normalComponent, lengthComponent, thetaRad);
             catch
             end
         end
         exprOut = simplify(exprOut, 'IgnoreAnalyticConstraints', true);
     end
-
     function exprOut = applyAngleRatioSubstitutions(exprIn, refComponent, normalComponent, lengthComponent, thetaRad)
         exprOut = exprIn;
         if ~isPureNumericSymbolic(normalComponent / refComponent)
@@ -4582,6 +4392,10 @@ refreshAll();
         set(ui.infoBox, 'String', message);
     end
 end
+
+
+
+
 
 
 
