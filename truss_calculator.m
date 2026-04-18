@@ -441,7 +441,7 @@ refreshAll();
 
         ui.symbolicFormatLabel = uicontrol(panel, ...
             'Style', 'text', ...
-            'String', 'Symbolik', ...
+            'String', 'Symbolic', ...
             'HorizontalAlignment', 'left', ...
             'Units', 'normalized', ...
             'Position', [0.62 0.92 0.10 0.05], ...
@@ -976,7 +976,7 @@ refreshAll();
                     state.symbolicDisplayCache = emptySymbolicDisplayCache();
                     state.symbolicFastDisplay = false;
                     refreshAll();
-                    updateInfo(sprintf('Symbolische Computation failed:\n%s', err.message));
+                    updateInfo(sprintf('Symbolic computation failed:\n%s', err.message));
                 end
                 endComputeProgress(progressHandle);
             end
@@ -1311,13 +1311,6 @@ refreshAll();
         refreshAll();
     end
 
-    function synchronizeNodeTables()
-        nodeCount = size(getTableDataAsCell(ui.nodesTable), 1);
-        supportData = resizeSupportTable(getTableDataAsCell(ui.supportsTable), nodeCount);
-
-        set(ui.supportsTable, 'Data', supportData);
-    end
-
     function onTableSelection(tableName, evt)
         if isempty(evt.Indices)
             state.selection.table = '';
@@ -1362,7 +1355,7 @@ refreshAll();
 
         clearResultsAfterGeometryChange();
         refreshAll();
-        updateInfo(sprintf('Node %d bei (%.4g, %.4g) added.', size(nodeData, 1), xy(1), xy(2)));
+        updateInfo(sprintf('Node %d added at (%.4g, %.4g).', size(nodeData, 1), xy(1), xy(2)));
     end
 
     function onNodeClicked(idx)
@@ -1459,12 +1452,12 @@ refreshAll();
         stress = resultData.stresses(idx);
         lengthVal = resultData.lengths(idx);
         areaVal = resultData.areas(idx);
-        label = 'Zug';
+        label = 'Tension';
         if ~isSymbolic
             if force < 0
-                label = 'Druck';
+                label = 'Compression';
             elseif abs(force) < max(abs(resultData.axialForces)) * 1e-9 + 1e-12
-                label = 'Nullstab';
+                label = 'Zero-force member';
             end
         end
 
@@ -1766,7 +1759,7 @@ refreshAll();
         state.dragMoved = true;
         clearResultsAfterGeometryChange();
         refreshAll();
-        updateInfo(sprintf('Node %d moved auf (%.4g, %.4g).', state.dragNode, xy(1), xy(2)));
+        updateInfo(sprintf('Node %d moved to (%.4g, %.4g).', state.dragNode, xy(1), xy(2)));
     end
 
     function onWindowMouseUp(~, ~)
@@ -1979,12 +1972,19 @@ refreshAll();
             expr = applyAngleVariableDisplaySubstitutions(expr);
             [simplifySteps, useLightFormatting] = symbolicFormattingOptions(usage);
             if strcmp(formatMode, 'trig')
-                [exprForDisplay, tempAngleVars, originalAngleVars] = applyDisplayAngleAssumptions(expr);
-                formatted = rewrite(exprForDisplay, 'sincos');
-                if ~useLightFormatting
-                    formatted = simplify(formatted, 'Steps', min(simplifySteps, 20));
+                angleConstraintFormattingActive = shouldApplyAngleConstraintDisplaySubstitutions(usage) && ...
+                    ~isempty(state.symbolicModel) && isfield(state.symbolicModel, 'angleConstraints') && ...
+                    ~isempty(state.symbolicModel.angleConstraints);
+                [exprForDisplay, tempPositiveVars, originalPositiveVars] = applyPositiveDisplayAssumptions(expr);
+                [exprForDisplay, tempAngleVars, originalAngleVars] = applyDisplayAngleAssumptions(exprForDisplay);
+                if angleConstraintFormattingActive
+                    formatted = applyAngleConstraintDisplaySubstitutions(exprForDisplay);
+                    formatted = applyAngleVariableDisplaySubstitutions(formatted);
+                    formatted = rewrite(formatted, 'sincos');
+                else
+                    formatted = rewrite(exprForDisplay, 'sincos');
                 end
-                if shouldApplyAngleConstraintDisplaySubstitutions(usage)
+                if shouldApplyAngleConstraintDisplaySubstitutions(usage) && ~angleConstraintFormattingActive
                     formatted = applyAngleConstraintDisplaySubstitutions(formatted);
                     formatted = applyAngleVariableDisplaySubstitutions(formatted);
                 end
@@ -1992,27 +1992,28 @@ refreshAll();
                     formatted = subs(formatted, tempAngleVars, originalAngleVars);
                     formatted = rewrite(formatted, 'sincos');
                 end
-                if ~useLightFormatting
+                if ~isempty(tempPositiveVars)
+                    formatted = subs(formatted, tempPositiveVars, originalPositiveVars);
+                    formatted = rewrite(formatted, 'sincos');
+                end
+                if ~useLightFormatting && ~angleConstraintFormattingActive
                     formatted = simplify(formatted, 'Steps', min(simplifySteps, 20));
                 end
             else
+                [exprForDisplay, tempPositiveVars, originalPositiveVars] = applyPositiveDisplayAssumptions(expr);
                 if useLightFormatting
-                    formatted = expr;
+                    formatted = exprForDisplay;
                 else
-                    expr = simplify(expr, 'IgnoreAnalyticConstraints', true, 'Steps', simplifySteps);
-                    formatted = simplify(expr, 'IgnoreAnalyticConstraints', true, 'Steps', simplifySteps);
+                    exprForDisplay = simplify(exprForDisplay, 'IgnoreAnalyticConstraints', true, 'Steps', simplifySteps);
+                    formatted = simplify(exprForDisplay, 'IgnoreAnalyticConstraints', true, 'Steps', simplifySteps);
                 end
-                if shouldApplyAngleConstraintDisplaySubstitutions(usage)
-                    formatted = applyAngleConstraintDisplaySubstitutions(formatted);
-                    formatted = applyAngleVariableDisplaySubstitutions(formatted);
-                    if ~useLightFormatting
-                        formatted = simplify(formatted, 'IgnoreAnalyticConstraints', true, 'Steps', min(simplifySteps, 20));
-                    end
+                if ~isempty(tempPositiveVars)
+                    formatted = subs(formatted, tempPositiveVars, originalPositiveVars);
                 end
             end
-            txt = postProcessSymbolicDisplayText(char(formatted), usage);
+            txt = postProcessSymbolicDisplayText(char(formatted), usage, formatMode);
         catch
-            txt = postProcessSymbolicDisplayText(char(expr), usage);
+            txt = postProcessSymbolicDisplayText(char(expr), usage, formatMode);
         end
     end
 
@@ -2085,23 +2086,67 @@ refreshAll();
         end
     end
 
+    function [exprOut, tempVars, originalVars] = applyPositiveDisplayAssumptions(exprIn)
+        exprOut = exprIn;
+        tempVars = sym.empty(1, 0);
+        originalVars = sym.empty(1, 0);
+        if isempty(state.symbolicVariableDefs) || ~isstruct(state.symbolicVariableDefs) || ...
+                ~isfield(state.symbolicVariableDefs, 'names') || ~isfield(state.symbolicVariableDefs, 'previewValues')
+            return;
+        end
+        angleNames = string(state.symbolicAngleVariableNames);
+        variableNames = state.symbolicVariableDefs.names;
+        previewValues = state.symbolicVariableDefs.previewValues;
+        if isempty(variableNames)
+            return;
+        end
+        symNames = arrayfun(@char, symvar(exprOut), 'UniformOutput', false);
+        for idx = 1:numel(variableNames)
+            originalName = strtrim(char(string(variableNames{idx})));
+            if isempty(originalName) || any(strcmp(string(originalName), angleNames))
+                continue;
+            end
+            if idx > numel(previewValues)
+                continue;
+            end
+            previewValue = previewValues(idx);
+            if ~isnumeric(previewValue) || ~isscalar(previewValue) || ~isfinite(previewValue) || previewValue <= 0
+                continue;
+            end
+            originalVar = sym(originalName);
+            if ~any(strcmp(symNames, originalName))
+                continue;
+            end
+            tempVar = sym(sprintf('__posdisp_%d__', idx), 'real');
+            assumeAlso(tempVar > 0);
+            exprOut = subs(exprOut, originalVar, tempVar);
+            tempVars(end + 1) = tempVar; %#ok<AGROW>
+            originalVars(end + 1) = originalVar; %#ok<AGROW>
+        end
+    end
+
     function cache = emptySymbolicDisplayCache()
         cache = struct( ...
             'trig', struct('members', [], 'reactions', [], 'memberInfo', {{}}, 'reactionInfo', {{}}, 'summary', ''), ...
             'exact', struct('members', [], 'reactions', [], 'memberInfo', {{}}, 'reactionInfo', {{}}, 'summary', ''));
     end
 
-    function txt = postProcessSymbolicDisplayText(txt, usage)
+    function txt = postProcessSymbolicDisplayText(txt, usage, formatMode)
         if nargin < 2
             usage = 'detail';
+        end
+        if nargin < 3 || isempty(formatMode)
+            formatMode = 'trig';
         end
         txt = regexprep(txt, '([A-Za-z0-9_]+)\^\(1/2\)', 'sqrt($1)');
         txt = regexprep(txt, '\(([^()]+)\)\^\(1/2\)', 'sqrt($1)');
         txt = regexprep(txt, 'sqrt\(([A-Za-z0-9_]+)\)\*([A-Za-z]\w*)', '$2*sqrt($1)');
         txt = regexprep(txt, '(^|[+\-])([0-9]+)\*sqrt\(([A-Za-z0-9_]+)\)\*([A-Za-z]\w*)', '$1$2*$4*sqrt($3)');
-        if shouldApplyAngleConstraintDisplaySubstitutions(usage)
+        txt = applyPositivePreviewTextSubstitutions(txt);
+        if strcmp(formatMode, 'trig') && shouldApplyAngleConstraintDisplaySubstitutions(usage)
             txt = applyAngleConstantDisplayTextSubstitutions(txt);
             txt = applyAngleNameTextRewrites(txt);
+            txt = applyGeneralTrigDisplayTextRewrites(txt);
         end
         txt = strrep(txt, '*1/', '/');
         txt = strrep(txt, ')/1/', ')/');
@@ -2134,6 +2179,16 @@ refreshAll();
         end
     end
 
+    function txt = applyGeneralTrigDisplayTextRewrites(txtIn)
+        txt = txtIn;
+        txt = regexprep(txt, '\(([^()]+)/(cos\([^()]+\))\)/([A-Za-z0-9_.]+)', '$1/($3*$2)');
+        txt = regexprep(txt, '\(([^()]+)/(sin\([^()]+\))\)/([A-Za-z0-9_.]+)', '$1/($3*$2)');
+        txt = regexprep(txt, '\(([^()]+)\*tan\(([^()]+)\)/(cos\(\2\))\)/([A-Za-z0-9_.]+)', '$1/($4*sin($2))');
+        txt = regexprep(txt, '\(([^()]+)\*cot\(([^()]+)\)/(sin\(\2\))\)/([A-Za-z0-9_.]+)', '$1/($4*cos($2))');
+        txt = regexprep(txt, '\(([^()]+)/(cos\([^()]+\))\)', '$1/$2');
+        txt = regexprep(txt, '\(([^()]+)/(sin\([^()]+\))\)', '$1/$2');
+    end
+
     function [refComponent, normalComponent, lengthComponent, thetaText, ok] = angleDisplayGeometry(model, constraintIdx, textUsage)
         if nargin < 3 || isempty(textUsage)
             textUsage = 'detail';
@@ -2141,7 +2196,7 @@ refreshAll();
         refComponent = [];
         normalComponent = [];
         lengthComponent = [];
-        thetaText = '';
+        thetaText = ''; %#ok<NASGU> % Default output for early returns
         ok = false;
 
         [commonNode, refNode, targetNode] = sharedNodesForAngleConstraint(model.elements, ...
@@ -2191,18 +2246,53 @@ refreshAll();
 
                 for repIdx = 1:size(replacements, 1)
                     ratioExpr = simplify(replacements{repIdx, 1});
-                    if ~isPureNumericSymbolic(ratioExpr)
+                    [ratioExprDisplay, ratioTempVars, ratioOriginalVars] = applyPositiveDisplayAssumptions(ratioExpr);
+                    ratioExprDisplay = simplify(ratioExprDisplay, 'IgnoreAnalyticConstraints', true);
+                    if ~isempty(ratioTempVars)
+                        ratioExprDisplay = subs(ratioExprDisplay, ratioTempVars, ratioOriginalVars);
+                    end
+                    [ratioNum, ratioDen] = numden(ratioExprDisplay);
+                    ratioText = postProcessSymbolicDisplayText(char(ratioExprDisplay), 'reaction-detail');
+                    if isempty(ratioText) || ~isempty(regexp(strtrim(ratioText), '^\(?[+-]?\d+(\.\d+)?(/\d+(\.\d+)?)?\)?$', 'once'))
                         continue;
                     end
-                    ratioText = postProcessSymbolicDisplayText(char(ratioExpr), 'reaction-detail');
-                    if isempty(ratioText)
-                        continue;
-                    end
+                    ratioNumText = postProcessSymbolicDisplayText(char(ratioNum), 'reaction-detail');
+                    ratioDenText = postProcessSymbolicDisplayText(char(ratioDen), 'reaction-detail');
                     txt = strrep(txt, ratioText, replacements{repIdx, 2});
                     txt = strrep(txt, ['(' ratioText ')'], replacements{repIdx, 2});
+                    if ~isempty(ratioNumText) && ~isempty(ratioDenText)
+                        txt = strrep(txt, [ratioNumText ')/' ratioDenText], [replacements{repIdx, 2} ')']);
+                        txt = strrep(txt, [ratioNumText ')/(' ratioDenText ')'], [replacements{repIdx, 2} ')']);
+                    end
                 end
             catch
             end
+        end
+    end
+
+    function txt = applyPositivePreviewTextSubstitutions(txtIn)
+        txt = txtIn;
+        if isempty(state.symbolicVariableDefs) || ~isstruct(state.symbolicVariableDefs) || ...
+                ~isfield(state.symbolicVariableDefs, 'names') || ~isfield(state.symbolicVariableDefs, 'previewValues')
+            return;
+        end
+        angleNames = string(state.symbolicAngleVariableNames);
+        variableNames = state.symbolicVariableDefs.names;
+        previewValues = state.symbolicVariableDefs.previewValues;
+        for idx = 1:numel(variableNames)
+            varName = strtrim(char(string(variableNames{idx})));
+            if isempty(varName) || any(strcmp(string(varName), angleNames))
+                continue;
+            end
+            if idx > numel(previewValues)
+                continue;
+            end
+            previewValue = previewValues(idx);
+            if ~isnumeric(previewValue) || ~isscalar(previewValue) || ~isfinite(previewValue) || previewValue <= 0
+                continue;
+            end
+            escapedName = regexptranslate('escape', varName);
+            txt = regexprep(txt, ['sqrt\(' escapedName '\^2\)'], varName);
         end
     end
     function progressHandle = beginComputeProgress()
@@ -2228,7 +2318,7 @@ refreshAll();
             if state.computeCancelRequested
                 set(ui.statusText, 'String', 'Mode: Cancellation requested...');
             else
-                set(ui.statusText, 'String', 'Mode: Rechnet...');
+                set(ui.statusText, 'String', 'Mode: Computing...');
             end
             drawnow;
             throwIfComputeCancelled();
@@ -2345,23 +2435,6 @@ refreshAll();
         tf = isempty(symvar(exprSimplified));
     end
 
-    function signVal = symbolicDirectionSign(value)
-        if isAlways(value > 0, 'Unknown', 'false')
-            signVal = sym(1);
-        elseif isAlways(value < 0, 'Unknown', 'false')
-            signVal = sym(-1);
-        else
-            signVal = [];
-            try
-                approxValue = evaluateScalarExpression(char(value), state.symbolicVariableDefs, 'preview');
-                if isfinite(approxValue) && abs(approxValue) > 1e-12
-                    signVal = sym(sign(approxValue));
-                end
-            catch
-            end
-        end
-    end
-
     function txt = formatAnyEntry(entry)
         if isa(entry, 'sym')
             txt = formatSymbolicText(entry);
@@ -2386,29 +2459,6 @@ refreshAll();
         if isempty(txt)
             txt = '0';
         end
-    end
-
-    function txt = formatLoadTableEntry(entry)
-        if isempty(entry)
-            txt = '';
-            return;
-        end
-        if isstring(entry)
-            entry = char(entry);
-        end
-        if ischar(entry)
-            txt = strtrim(entry);
-            return;
-        end
-        if isa(entry, 'sym')
-            txt = formatSymbolicText(entry);
-            return;
-        end
-        if isnumeric(entry) || islogical(entry)
-            txt = formatNumber(double(entry));
-            return;
-        end
-        txt = strtrim(char(string(entry)));
     end
 
     function txt = summaryText(model, results)
@@ -2671,7 +2721,7 @@ refreshAll();
                 error('Member %d uses the same start and end node.', e);
             end
             if m < 1 || m > size(model.materials, 1)
-                error('Member %d verweist auf ein unvalids Material.', e);
+                error('Member %d references an invalid material.', e);
             end
             if isSymbolicModel
                 dx = simplify(model.nodes(i, 1) - model.nodes(j, 1));
@@ -2708,60 +2758,6 @@ refreshAll();
         model.variables = getTableDataAsCell(ui.variablesTable);
     end
 
-    function applyRawModelToTables(model)
-        requiredFields = {'nodeEntries', 'elements', 'materials', 'supports'};
-        for k = 1:numel(requiredFields)
-            if ~isfield(model, requiredFields{k})
-                error('The loaded structure does not contain all required fields.');
-            end
-        end
-
-        set(ui.nodesTable, 'Data', getCellMatrix(model.nodeEntries, 2));
-        set(ui.elementsTable, 'Data', getCellMatrix(model.elements, 3));
-        if isfield(model, 'materialDefs')
-            set(ui.materialsTable, 'Data', getCellMatrix(model.materialDefs, 5));
-        else
-            materialData = model.materials;
-            if iscell(materialData) && ~isempty(materialData) && size(materialData, 2) == 5
-                set(ui.materialsTable, 'Data', getCellMatrix(materialData, 5));
-            elseif ~iscell(materialData) && ~isempty(materialData) && size(materialData, 2) == 5
-                set(ui.materialsTable, 'Data', num2cell(materialData));
-            else
-                set(ui.materialsTable, 'Data', convertLegacyMaterialsToMaterialDefs(model));
-            end
-        end
-        if isfield(model, 'angleConstraints')
-            set(ui.anglesTable, 'Data', getCellMatrix(model.angleConstraints, 3));
-        else
-            set(ui.anglesTable, 'Data', cell(0, 3));
-        end
-        if isfield(model, 'supportDefs')
-            set(ui.supportsTable, 'Data', resizeSupportTable(getCellMatrix(model.supportDefs, 2), size(model.nodeEntries, 1)));
-        else
-            set(ui.supportsTable, 'Data', convertLegacySupportsToSupportDefs(model));
-        end
-        if isfield(model, 'loadPoints')
-            loadPointData = model.loadPoints;
-            if iscell(loadPointData) && ~isempty(loadPointData) && size(loadPointData, 2) == 6
-                set(ui.loadsTable, 'Data', getCellMatrix(loadPointData, 6));
-            elseif ~iscell(loadPointData) && ~isempty(loadPointData) && size(loadPointData, 2) == 6
-                set(ui.loadsTable, 'Data', convertProcessedLoadPointsToLoadTable(loadPointData));
-            else
-                set(ui.loadsTable, 'Data', convertProcessedLoadPointsToLoadTable(loadPointData));
-            end
-        elseif isfield(model, 'loads')
-            set(ui.loadsTable, 'Data', convertLegacyLoadsToLoadPoints(model));
-        else
-            set(ui.loadsTable, 'Data', cell(0, 6));
-        end
-        if isfield(model, 'variables')
-            set(ui.variablesTable, 'Data', getCellMatrix(model.variables, 2));
-        else
-            set(ui.variablesTable, 'Data', cell(0, 2));
-        end
-        synchronizeNodeTables();
-    end
-
     function model = expandModelWithLoadPoints(baseModel)
         model = baseModel;
         model.loads = zeros(size(baseModel.nodes, 1), 2);
@@ -2791,7 +2787,7 @@ refreshAll();
                     return;
                 end
                 error(['A load application point at (%.6g, %.6g) does not lie on a node or member. ' ...
-                    'Please Loads auf das Fachwerk setzen.'], point(1), point(2));
+                    'Please place loads on the truss.'], point(1), point(2));
             end
 
             e = model.elements(elemIdx, :);
@@ -2929,75 +2925,6 @@ refreshAll();
         proj = p1 + tClamped * d;
         distance = norm(point - proj);
         t = tClamped;
-    end
-
-    function rows = convertLegacyLoadsToLoadPoints(model)
-        nodeEntries = getCellMatrix(model.nodeEntries, 2);
-        loads = cellToNumericIfPossible(getCellMatrix(model.loads, 2), 0);
-        rows = cell(0, 6);
-        for k = 1:min(size(nodeEntries, 1), size(loads, 1))
-            if any(abs(loads(k, :)) > 0)
-                rows(end + 1, :) = {formatLoadTableEntry(nodeEntries{k, 1}), formatLoadTableEntry(nodeEntries{k, 2}), ...
-                    formatLoadTableEntry(loads(k, 1)), formatLoadTableEntry(loads(k, 2)), '', ''}; %#ok<AGROW>
-            end
-        end
-    end
-
-    function rows = convertProcessedLoadPointsToLoadTable(loadPoints)
-        if isempty(loadPoints)
-            rows = cell(0, 6);
-            return;
-        end
-        if iscell(loadPoints)
-            points = cellToNumericIfPossible(getCellMatrix(loadPoints, size(loadPoints, 2)), 0);
-        else
-            points = loadPoints;
-        end
-        rows = cell(size(points, 1), 6);
-        for k = 1:size(points, 1)
-            fx = points(k, 3);
-            fy = points(k, 4);
-            mag = hypot(fx, fy);
-            ang = atan2d(fy, fx);
-            rows(k, :) = {formatLoadTableEntry(points(k, 1)), formatLoadTableEntry(points(k, 2)), ...
-                formatLoadTableEntry(fx), formatLoadTableEntry(fy), ...
-                formatLoadTableEntry(mag), formatLoadTableEntry(ang)};
-        end
-    end
-
-    function rows = convertLegacyMaterialsToMaterialDefs(model)
-        materials = getCellMatrix(model.materials, 2);
-        rows = cell(size(materials, 1), 5);
-        for k = 1:size(materials, 1)
-            areaVal = cellToDouble(materials{k, 1});
-            eVal = cellToDouble(materials{k, 2});
-            if ~isfinite(areaVal) || areaVal <= 0
-                areaVal = pi * 0.05^2 / 4;
-            end
-            if ~isfinite(eVal) || eVal <= 0
-                eVal = 210e9;
-            end
-            diameter = sqrt(4 * areaVal / pi);
-            rows(k, :) = {'Circular', diameter, 0, 0, eVal};
-        end
-    end
-
-    function rows = convertLegacySupportsToSupportDefs(model)
-        supports = getCellMatrix(model.supports, 2);
-        rows = cell(size(supports, 1), 2);
-        for k = 1:size(supports, 1)
-            fixX = cellToLogicalPreview(supports{k, 1});
-            fixY = cellToLogicalPreview(supports{k, 2});
-            if fixX && fixY
-                rows(k, :) = {'Pinned Support', '0'};
-            elseif fixY
-                rows(k, :) = {'Roller Support', '0'};
-            elseif fixX
-                rows(k, :) = {'Roller Support', '90'};
-            else
-                rows(k, :) = {'No Support', '0'};
-            end
-        end
     end
 
     function result = solveTruss(model)
@@ -3581,12 +3508,12 @@ refreshAll();
         end
 
         if isempty(entry)
-            error('Node %d ist unvollstaendig.', currentRow);
+                error('Node %d is incomplete.', currentRow);
         end
 
         expr = strtrim(char(entry));
         if isempty(expr)
-            error('Node %d ist unvollstaendig.', currentRow);
+                error('Node %d is incomplete.', currentRow);
         end
 
         for k = 1:(currentRow - 1)
@@ -3629,7 +3556,7 @@ refreshAll();
                 error('px/py in node %d may only reference already defined nodes.', currentRow);
             end
             if strcmp(mode, 'numeric') && (any(~isfinite(nodesSoFar(startNode, :))) || any(~isfinite(nodesSoFar(refNode, :))))
-                error('px/py in Node %d verweist auf unvollstaendige reference nodes.', currentRow);
+                    error('px/py in node %d references incomplete reference nodes.', currentRow);
             end
 
             basePoint = nodesSoFar(startNode, :);
@@ -4236,23 +4163,6 @@ refreshAll();
         end
     end
 
-    function value = cellToLogicalPreview(entry)
-        if islogical(entry)
-            value = entry;
-            return;
-        end
-        if isnumeric(entry)
-            value = logical(entry);
-            return;
-        end
-        if isempty(entry)
-            value = false;
-            return;
-        end
-        textValue = strtrim(char(entry));
-        value = any(strcmpi(textValue, {'1', 'true', 'ja', 'x'}));
-    end
-
     function supportType = normalizeSupportType(entry)
         if isstring(entry)
             entry = char(entry);
@@ -4363,21 +4273,6 @@ refreshAll();
         end
 
         elemData = elemData(keep, :);
-    end
-
-    function out = cellToNumericIfPossible(data, emptyValue)
-        nCols = size(data, 2);
-        data = getCellMatrix(data, nCols);
-        out = zeros(size(data));
-        for r = 1:size(data, 1)
-            for c = 1:size(data, 2)
-                val = cellToDouble(data{r, c});
-                if isnan(val)
-                    val = emptyValue;
-                end
-                out(r, c) = val;
-            end
-        end
     end
 
     function txt = formatNumber(value)
