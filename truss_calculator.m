@@ -928,6 +928,7 @@ refreshAll();
         angleVariableNames = collectAngleVariableNames(raw);
         previousState = snapshotResultState();
         progressHandle = beginComputeProgress();
+        progressCleanup = onCleanup(@() endComputeProgress(progressHandle)); %#ok<NASGU>
         if ~isempty(variableDefs.names)
             try
                 updateComputeProgress(progressHandle, 0.15, 'Building symbolic model...');
@@ -961,7 +962,6 @@ refreshAll();
                 updateComputeProgress(progressHandle, 0.95, 'Updating GUI...');
                 refreshAll();
                 updateInfo(summaryTextSymbolic(model, state.symbolicResults, variableDefs));
-                endComputeProgress(progressHandle);
             catch err
                 if isComputeCancelledError(err)
                     restoreResultState(previousState);
@@ -978,7 +978,6 @@ refreshAll();
                     refreshAll();
                     updateInfo(sprintf('Symbolic computation failed:\n%s', err.message));
                 end
-                endComputeProgress(progressHandle);
             end
             return;
         end
@@ -995,7 +994,6 @@ refreshAll();
             state.symbolicFastDisplay = false;
             refreshAll();
             updateInfo(errMsg);
-            endComputeProgress(progressHandle);
             return;
         end
 
@@ -1011,7 +1009,6 @@ refreshAll();
             updateComputeProgress(progressHandle, 0.95, 'Updating GUI...');
             refreshAll();
             updateInfo(summaryText(model, state.results));
-            endComputeProgress(progressHandle);
         catch err
             if isComputeCancelledError(err)
                 restoreResultState(previousState);
@@ -1024,11 +1021,10 @@ refreshAll();
                 state.symbolicVariableDefs = struct('names', {{}}, 'previewValues', []);
                 state.symbolicAngleVariableNames = {};
                 state.symbolicDisplayCache = emptySymbolicDisplayCache();
-                state.symbolicFastDisplay = false;
-                refreshAll();
-                updateInfo(sprintf('Computation failed:\n%s', err.message));
+                    state.symbolicFastDisplay = false;
+                    refreshAll();
+                    updateInfo(sprintf('Computation failed:\n%s', err.message));
             end
-            endComputeProgress(progressHandle);
         end
     end
 
